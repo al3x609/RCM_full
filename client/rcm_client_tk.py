@@ -22,13 +22,13 @@ import urllib2
 import tempfile
 import pickle
 import collections
-import threading
+#luigi_disable_thread#import threading
 
 
 font = ("Helvetica",10, "grey")
 boldfont = ("Helvetica",10,"bold")
-checkCredential = False 
-queueList = []
+checkCredential = False
+##bad_globals##queueList = []
 lastClientVersion = []
 
 
@@ -46,7 +46,7 @@ def safe(debug=False):
 #                    l_args[0].stopBusy()
 #                except:
 #                    pass
-                if debug:
+                if True:
                     import traceback
                     tkMessageBox.showwarning("Error","in {0}: {1}\n{2}".format(f.__name__, e,traceback.format_exc()))
                     traceback.print_exc()
@@ -285,12 +285,14 @@ class ConnectionWindow(Frame):
 
 
     @safe_debug_off   
-    def check_version(self):       
+    def check_version(self):
+        self.startBusy("Getting config info")
+        self.platform_config=self.client_connection.get_config()
         self.startBusy("Checking new client version...")
         if('frozen' in dir(sys)):
             currentChecksum = compute_checksum(sys.executable)
             global lastClientVersion
-            lastClientVersion = self.client_connection.get_version()
+            lastClientVersion = self.platform_config.get_version()
             
             if(currentChecksum != lastClientVersion[0]):
                 self.stopBusy()
@@ -442,25 +444,32 @@ class ConnectionWindow(Frame):
     @safe_debug_off
     def submit(self):
         self.startBusy("Waiting for queue list...")
-        global queueList
-        queueList = self.client_connection.get_queue()
+##bad_globals##        global queueList
+        queues=self.client_connection.queues()
+        queueList = queues.keys()
+        vncs=self.client_connection.vncs()
+        vncList = vncs.keys()
+
         self.stopBusy()
         if(self.debug): print "Queue list: ", queueList
         if queueList == ['']:
             tkMessageBox.showwarning("Warning", "Queue not found...")
             return
         
-        dd = newDisplayDialog(self)
+        dd = newDisplayDialog(self,queues,vncs)
+
         if dd.displayDimensions == NONE:
             self.stopBusy()
             return
         
         self.displayDimension = dd.displayDimensions
         self.queue = dd.queue.get()
+        self.vnc_id=dd.vnc.get()
         self.sessionname = dd.sessionName
 
-        t = threading.Thread(target=self.create_display)
-        t.start()
+        #luigi_disable_thread#t = threading.Thread(target=self.create_display)
+        #luigi_disable_thread#t.start()
+        target=self.create_display()
 
         self.startBusy("Creating a new remote display...")
         self.after(8000, self.set_do_list_refresh)
@@ -471,14 +480,14 @@ class ConnectionWindow(Frame):
 
     @safe_debug_off
     def create_display(self):
-        newconn=self.client_connection.newconn(self.queue, self.displayDimension, self.sessionname)
+        newconn=self.client_connection.newconn(self.queue, self.displayDimension, self.sessionname, vnc_id=self.vnc_id)
 
-        lock = threading.Lock()
-        lock.acquire()
-        try:
-            self.pending_connections.append(newconn)
-        finally:
-            lock.release()
+        #luigi_disable_thread#lock = threading.Lock()
+        #luigi_disable_thread#lock.acquire()
+        #luigi_disable_thread#try:
+        self.pending_connections.append(newconn)
+        #luigi_disable_thread#finally:
+        #luigi_disable_thread#    lock.release()
 
         
     @safe_debug_off
@@ -500,7 +509,8 @@ class ConnectionWindow(Frame):
         if (len(self.pending_connections) != 0):
             conn = self.pending_connections.pop()
             self.list_refresh()
-            self.client_connection.vncsession(conn, conn.hash['otp'], self.connection_buttons[conn.hash['sessionid']][1])
+            (button,cmd)=self.connection_buttons.get(conn.hash['sessionid'], (None,None))
+            if(cmd): self.client_connection.vncsession(conn, conn.hash['otp'], cmd)
 
         self.after(100,self.auto_list_refresh)
 
@@ -553,6 +563,11 @@ class newVersionDialog(tkSimpleDialog.Dialog):
 
 class newDisplayDialog(tkSimpleDialog.Dialog):
 
+    def __init__(self,master,queues,vnc_menu):
+        self.queues=queues
+        self.vnc_menu=vnc_menu
+        tkSimpleDialog.Dialog.__init__(self,master)
+
     def buttonbox(self):
         box = Frame(self.topFrame)
 
@@ -597,14 +612,28 @@ class newDisplayDialog(tkSimpleDialog.Dialog):
         self.v = IntVar()
         self.displayDimension = NONE
         self.queue = StringVar(master)
+        self.vnc = StringVar(master)
+        queueList = self.queues.keys()
+        vncList=self.vnc_menu.keys()
         self.queue.set(queueList[0])
+        self.vnc.set(vncList[0])
         if (len(queueList) > 1):
             optionFrame = Frame(self.topFrame, padding = 5)
-            Label(optionFrame, text="""Select queue:""").pack(side=LEFT)        
-            w = apply(OptionMenu, (optionFrame, self.queue) + tuple(queueList))
+            Label(optionFrame, text="""Select queue:""").pack(side=LEFT)
+            def print_it(event):
+              print self.queue.get()
+            qq=tuple(queueList)
+
+            w = OptionMenu(optionFrame, self.queue, qq[0], *qq, command=print_it)
             w.pack(side=LEFT)
-            optionFrame.pack(anchor=W, padx=15)
-        
+            optionFrame.pack( padx=15)
+        if (len(vncList) > 1):
+            vncFrame = Frame(self.topFrame, padding = 5)
+            Label(vncFrame, text="""Select vnc:""").pack(side=LEFT)
+            w = apply(OptionMenu, (vncFrame, self.vnc,vncList[0]) + tuple(vncList))
+            w.pack(side=LEFT)
+            vncFrame.pack(anchor=W, padx=15)
+
         displayFrame = Frame(self.topFrame, padding = 5)
 
         fullDisplayDimension = str(self.winfo_screenwidth()) + 'x' + str(self.winfo_screenheight())
@@ -617,13 +646,13 @@ class newDisplayDialog(tkSimpleDialog.Dialog):
             self.displayDimensionsList.pop()
             self.displayDimensionsList.append("Full Screen")
 
-        self.e1String = StringVar()  
+        self.e1String = StringVar()
         Label(displayFrame, text="""Display size:    """).pack(side=LEFT)
         if (len(list(self.displayDimensionsList)) > 0):           
             self.displayVariable = StringVar(displayFrame)
             self.displayVariable.set(list(self.displayDimensionsList)[0]) # default value
             self.fillEntry(self.displayVariable)
-            OptionMenu(displayFrame,self.displayVariable, *list(self.displayDimensionsList), command=self.fillEntry).pack(side=LEFT)        
+            OptionMenu(displayFrame,self.displayVariable, list(self.displayDimensionsList)[0],*list(self.displayDimensionsList), command=self.fillEntry).pack(side=LEFT)
         displayFrame.pack(padx=15)
 
         entryFrame = Frame(self.topFrame, padding = 5)

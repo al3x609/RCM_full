@@ -261,12 +261,22 @@ class SessionThread( threading.Thread ):
                     i = child.expect(['continue connecting', 'password','standard VNC authentication', pexpect.TIMEOUT, pexpect.EOF])
                 if i == 2:
                     # Standard VNC authentication
+                    i = child.expect(['dummy0','dummy1','Password:', pexpect.TIMEOUT, pexpect.EOF])
                     child.sendline(self.vncpassword)
 
                 if i == 3 or i == 4:
                     if(self.debug): print "Timeout connecting to the display."
                     if(self.gui_cmd): self.gui_cmd(active=False)
                     raise Exception("Timeout connecting to the display.")
+		  
+		i = child.expect(['Authentication successful', pexpect.TIMEOUT, pexpect.EOF])
+		if i > 0:
+                    if(self.debug): print "Authentication problems."
+                    if(self.gui_cmd): self.gui_cmd(active=False)
+		    for line in child:
+		      print "child expect-->",line
+                    raise Exception("Authentication problems.")
+
 
                 child.expect(pexpect.EOF, timeout=None)
 
