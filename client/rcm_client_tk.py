@@ -22,7 +22,14 @@ import urllib2
 import tempfile
 import pickle
 import collections
-#luigi_disable_thread#import threading
+#luigi_disable_thread####
+import threading
+
+import subprocess
+import argparse
+
+import logging
+module_logger = logging.getLogger('RCM.client_tk')
 
 
 font = ("Helvetica",10, "grey")
@@ -48,7 +55,7 @@ def safe(debug=False):
 #                    pass
                 if True:
                     import traceback
-                    tkMessageBox.showwarning("Error","in {0}: {1}\n{2}".format(f.__name__, e,traceback.format_exc()))
+                    tkMessageBox.showwarning("Error",rcm_utils.exceptionformat.format(f.__name__, e,traceback.format_exc()))
                     traceback.print_exc()
                 else:
                     tkMessageBox.showwarning("Error", e)
@@ -132,10 +139,14 @@ def update_exe_file():
             batchfile.write("rm "+os.path.basename(sys.executable)+"\n")
             batchfile.write("cp "+newfile+" .\n")
             batchfile.write("chmod a+x "+os.path.basename(sys.executable)+"\n")
+            batchfile.write("sleep 2 \n")
             batchfile.write("./"+os.path.basename(sys.executable)+"\n")
             batchfile.close()
             tkMessageBox.showinfo("Client Update", "The application will be closed and the new one will start in a while!")
-            os.system("sh "+batchfilename+ " &") 
+            #os.spawnl(os.P_NOWAIT,"sh "+batchfilename+ " ") 
+            module_logger.debug( "prima di subprocess "+batchfilename)
+            subprocess.Popen(["sh", batchfilename]) 
+            module_logger.debug( "dopo di subprocess "+batchfilename)
                     
 class Login(Frame):
     def __init__(self, master=None, guiaction=None, action=None):
@@ -147,12 +158,17 @@ class Login(Frame):
         self.config = ConfigParser.RawConfigParser()
         if(os.path.exists(self.configFileName)):
             try:
-                self.config.read(self.configFileName)    
+                fp = open(self.configFileName)
+                self.config.readfp(fp)    
                 hostList = self.config.get('LoginFields', 'hostList')
                 self.hostCollections=pickle.loads(hostList)
 
             except:
-                os.remove(self.configFileName)
+                fp.close()
+                try:
+                    os.remove(self.configFileName)
+                except:
+                    tkMessageBox.showwarning("Error", "the client config file->"+ self.configFileName +"< is invalid andcannot be removed, please remove it manually")
 
         self.guiaction=guiaction
         self.action=action
@@ -169,10 +185,16 @@ class Login(Frame):
 
         if (len(list(self.hostCollections)) > 0 ):
             Label(loginFrame, text="""Sessions:""").grid(row=0)
-            self.variable = StringVar(loginFrame)
+            self.variable = StringVar()
             self.variable.set(list(self.hostCollections)[0]) # default value
             self.fillCredentials(self.variable)
-            OptionMenu(loginFrame, self.variable, *list(self.hostCollections), command=self.fillCredentials).grid(row=0, column=1, sticky=W)        
+            #OptionMenu(loginFrame, self.variable, *list(self.hostCollections), command=self.fillCredentials).grid(row=0, column=1, sticky=W)
+
+            combo = Combobox(loginFrame, state="readonly", textvariable=self.variable, width=len(list(self.hostCollections)[0]) )
+            combo['values'] = list(self.hostCollections)
+            combo.bind("<<ComboboxSelected>>", self.fillCredentials)
+
+            combo.grid(row=0, column=1, sticky=W)
 
         Label(loginFrame, text="Host: ", padding=5).grid(row=1)
         Label(loginFrame, text="User: ", padding=5).grid(row=2)
@@ -241,7 +263,7 @@ class ConnectionWindow(Frame):
        
     @safe_debug_off
     def deathHandler(self, event):
-        if(self.debug): print self, " main app win has been closed . killing vnc connections"
+        if(self.debug): module_logger.info(" main app win has been closed . killing vnc connections")
         self.client_connection.vncsession_kill()
         
     def __init__(self, master=None,rcm_client_connection=None):
@@ -249,6 +271,7 @@ class ConnectionWindow(Frame):
         self.sessions=None
         self.do_list_refresh=False
         self.do_update_gui=True
+        self.master=master
         Frame.__init__(self, master)
         self.client_connection=rcm_client_connection
         self.connection_buttons=dict()
@@ -301,7 +324,7 @@ class ConnectionWindow(Frame):
                     self.startBusy("Downloading new version client...")
                     update_exe_file()
                     self.stopBusy()
-                    self.master.destroy()
+                    self.master.winfo_toplevel().destroy()
                     return
         self.stopBusy()
         self.update_idletasks()
@@ -337,7 +360,7 @@ class ConnectionWindow(Frame):
                 if(self.client_connection):
                 
                     def cmd(self=self, session=el):
-                        if(self.debug): print "killing session", sessionid
+                        if(self.debug): module_logger.debug( "killing session "+ str(sessionid))
                         self.kill(session)
                         
                     #if(el.hash['state'] == 'killed'):
@@ -358,12 +381,12 @@ class ConnectionWindow(Frame):
 
 
                     def disable_cmd(self=self, sessionid=el.hash['sessionid'],active=True):
-                        print "sessionid-->"+sessionid+"<--"
+                        module_logger.info( "changing sessionid->"+sessionid+"< button to "+str(active))
 
                         if(active):
                             self.client_connection.activeConnectionsList.append(sessionid)
                         else:
-                            self.client_connection.activeConnectionsList.remove(sessionid)
+                            if sessionid in self.client_connection.activeConnectionsList : self.client_connection.activeConnectionsList.remove(sessionid)
                             self.do_list_refresh=True
                         self.do_update_gui=True
 
@@ -378,7 +401,7 @@ class ConnectionWindow(Frame):
                         if(session.hash['sessionid'] in self.client_connection.activeConnectionsList):
                             tkMessageBox.showwarning("Warning!", "Already connected to session " +session.hash['sessionid'])
                         else:
-                            if(self.debug): print "connecting to session", session.hash['sessionid']
+                            if(self.debug): module_logger.info( "connecting to sessionid-->"+ str(session.hash['sessionid'])+"<")
                             self.startBusy("Connecting to the remote display...")
                             self.client_connection.vncsession(session,gui_cmd=disable_cmd)
                             self.after(4000,self.stopBusy)
@@ -451,7 +474,7 @@ class ConnectionWindow(Frame):
         vncList = vncs.keys()
 
         self.stopBusy()
-        if(self.debug): print "Queue list: ", queueList
+        if(self.debug): module_logger.debug( "Queue list: "+ str(queueList))
         if queueList == ['']:
             tkMessageBox.showwarning("Warning", "Queue not found...")
             return
@@ -469,7 +492,9 @@ class ConnectionWindow(Frame):
 
         #luigi_disable_thread#t = threading.Thread(target=self.create_display)
         #luigi_disable_thread#t.start()
-        target=self.create_display()
+        #target=self.create_display()
+        t = threading.Thread(target=self.create_display)
+        t.start()
 
         self.startBusy("Creating a new remote display...")
         self.after(8000, self.set_do_list_refresh)
@@ -482,12 +507,17 @@ class ConnectionWindow(Frame):
     def create_display(self):
         newconn=self.client_connection.newconn(self.queue, self.displayDimension, self.sessionname, vnc_id=self.vnc_id)
 
-        #luigi_disable_thread#lock = threading.Lock()
-        #luigi_disable_thread#lock.acquire()
-        #luigi_disable_thread#try:
-        self.pending_connections.append(newconn)
-        #luigi_disable_thread#finally:
-        #luigi_disable_thread#    lock.release()
+        #luigi_disable_thread#
+        lock = threading.Lock()
+        #luigi_disable_thread#
+        lock.acquire()
+        #luigi_disable_thread#
+        try:
+            self.pending_connections.append(newconn)
+        #luigi_disable_thread#
+        finally:
+        #luigi_disable_thread#
+            lock.release()
 
         
     @safe_debug_off
@@ -584,7 +614,7 @@ class newDisplayDialog(tkSimpleDialog.Dialog):
     def body(self, master):
 
         #Read configuration file
-        self.configFileName = os.path.join(os.path.expanduser('~'),'.rcm','RCM.cfg')
+        self.configFileName = os.path.join(rcm_utils.client_folder(),'RCM.cfg')
         self.displayDimensions = NONE
         self.displayDimensionsList = collections.deque(maxlen=5)
         self.config = ConfigParser.RawConfigParser()
@@ -595,7 +625,7 @@ class newDisplayDialog(tkSimpleDialog.Dialog):
                 displayDimensionsList = self.config.get('LoginFields', 'displayDimensionsList')
                 self.displayDimensionsList = pickle.loads(displayDimensionsList)
             except:
-                print "remove .cfg"
+                module_logger.debug( "remove .cfg")
                 os.remove(self.configFileName)    
                 
         #master.pack(fill=BOTH,expand=1)
@@ -607,59 +637,71 @@ class newDisplayDialog(tkSimpleDialog.Dialog):
         self.SessionNameString = StringVar() 
         e = Entry(sessionNameFrame, textvariable=self.SessionNameString, width=20).pack(side=LEFT)
         
-        sessionNameFrame.pack(padx=15)
+        sessionNameFrame.pack(padx=15, anchor=W)
         
         self.v = IntVar()
         self.displayDimension = NONE
-        self.queue = StringVar(master)
-        self.vnc = StringVar(master)
-        queueList = self.queues.keys()
-        vncList=self.vnc_menu.keys()
+        self.queue = StringVar()
+        self.vnc = StringVar()
+        queueList = sorted(self.queues.keys())
+        vncList = sorted(self.vnc_menu.keys())
         self.queue.set(queueList[0])
         self.vnc.set(vncList[0])
         if (len(queueList) > 1):
             optionFrame = Frame(self.topFrame, padding = 5)
-            Label(optionFrame, text="""Select queue:""").pack(side=LEFT)
+            Label(optionFrame, text="""Select queue: """).pack(side=LEFT)
             def print_it(event):
-              print self.queue.get()
-            qq=tuple(queueList)
+              module_logger.debug( self.queue.get())
 
-            w = OptionMenu(optionFrame, self.queue, qq[0], *qq, command=print_it)
-            w.pack(side=LEFT)
-            optionFrame.pack( padx=15)
+            combo = Combobox(optionFrame, state="readonly", textvariable=self.queue )
+            combo['values'] = queueList
+            combo.pack()
+
+            optionFrame.pack(padx=15, fill=X)
+
         if (len(vncList) > 1):
             vncFrame = Frame(self.topFrame, padding = 5)
-            Label(vncFrame, text="""Select vnc:""").pack(side=LEFT)
-            w = apply(OptionMenu, (vncFrame, self.vnc,vncList[0]) + tuple(vncList))
-            w.pack(side=LEFT)
-            vncFrame.pack(anchor=W, padx=15)
+            Label(vncFrame, text="""Select vnc: """, ).pack(side=LEFT)
+
+            combo = Combobox(vncFrame, state="readonly", textvariable=self.vnc )
+            combo['values'] = vncList
+            combo.pack()
+
+            vncFrame.pack(padx=15, fill=X)
 
         displayFrame = Frame(self.topFrame, padding = 5)
 
         fullDisplayDimension = str(self.winfo_screenwidth()) + 'x' + str(self.winfo_screenheight())
-        
+
         #always set full display as last item
         if (not len(list(self.displayDimensionsList)) > 0):
             self.displayDimensionsList.append("Full Screen")
-        
+
         if (not "Full Screen" in list(self.displayDimensionsList)):
             self.displayDimensionsList.pop()
             self.displayDimensionsList.append("Full Screen")
 
         self.e1String = StringVar()
-        Label(displayFrame, text="""Display size:    """).pack(side=LEFT)
-        if (len(list(self.displayDimensionsList)) > 0):           
+        Label(displayFrame, text="""Display size: """).pack(side=LEFT)
+        if (len(list(self.displayDimensionsList)) > 0):
             self.displayVariable = StringVar(displayFrame)
             self.displayVariable.set(list(self.displayDimensionsList)[0]) # default value
             self.fillEntry(self.displayVariable)
-            OptionMenu(displayFrame,self.displayVariable, list(self.displayDimensionsList)[0],*list(self.displayDimensionsList), command=self.fillEntry).pack(side=LEFT)
-        displayFrame.pack(padx=15)
+            #OptionMenu(displayFrame,self.displayVariable, list(self.displayDimensionsList)[0],*list(self.displayDimensionsList), command=self.fillEntry).pack(side=LEFT)
+
+            combo = Combobox(displayFrame, state="readonly", textvariable=self.displayVariable )
+            combo['values'] = list(self.displayDimensionsList)
+            combo.bind("<<ComboboxSelected>>", self.fillEntry)
+            combo.pack()
+
+        displayFrame.pack(padx=15, fill=X)
+
 
         entryFrame = Frame(self.topFrame, padding = 5)
-        e1 = Entry(entryFrame, textvariable=self.e1String, width=16).pack(side=LEFT)        
+        e1 = Entry(entryFrame, textvariable=self.e1String, width=16).pack(side=LEFT)
         entryFrame.pack(padx=15)
         return e1
-    
+
     def fillEntry(self,v):
         displayDimensions = self.displayVariable.get()
         if (displayDimensions == "Full Screen"):
@@ -696,7 +738,7 @@ class newDisplayDialog(tkSimpleDialog.Dialog):
             os.makedirs(d)
         with open(self.configFileName, 'wb') as configfile:
             self.config.write(configfile)
-            
+
         self.destroy()
         return
 
@@ -714,6 +756,7 @@ class LoginDialog:
         geometry = '+' + str(self.parent.winfo_x()) + '+' + str(self.parent.winfo_y())
         self.top.geometry(geometry)
         self.my_rcm_client = rcm_client.rcm_client_connection(pack_info = self.pack_info)
+        parent.connections.append(self.my_rcm_client)
         self.topFrame= Frame(self.top)
         self.topFrame.pack(fill=BOTH,expand=1)
         self.frameLogin = Login(guiaction=self.ok, action=self.my_rcm_client.login_setup, master=self.topFrame)
@@ -724,33 +767,44 @@ class LoginDialog:
          self.guiaction(self.my_rcm_client)
          self.top.destroy()
     
+
+class MyTopFrame(Frame):
+       
+    @safe_debug_off
+    def deathHandler(self, event):
+        module_logger.info( " MyTopFrame  has been closed . killing vnc connections")
+        for cc in self.connections:
+            cc.vncsession_kill()
+        
+    def __init__(self, master=None):
+        self.debug=True
+        self.connections=[]
+        Frame.__init__(self, master)
+        self.bind("<Destroy>", self.deathHandler)
+
+
 #class rcm_client_connection_GUI(rcm_client.rcm_client_connection):
 class rcm_client_connection_GUI():
     def __init__(self):
         self.pack_info=rcm_utils.pack_info()
         self.last_used_dir='.'
+        self.n=None
+
+    def quit(self):
+        self.master.destroy()
 
     def show(self):
         self.master = Tk()
         self.master.title('Remote Connection Manager ' + self.pack_info.rcmVersion + ' - CINECA')
         self.master.geometry("1150x180+100+100")
-        self.topFrame = Frame(self.master)
-        self.topFrame.pack(fill=BOTH,expand=1)
-        #mycolor='#%02x%02x%02x' % (240,240,237)
-        #self.master.configure(bg='gray')
-
+        self.topFrame = MyTopFrame(self.master) 
+        self.topFrame.pack(fill=BOTH,expand=1)        
         self.gui = None
-        
-        #s_color = Style()
-        #s_color.configure('RCM.Color', background='gray')
 
         self.frame1 = LabelFrame(self.topFrame, padding=20, text='LOGIN MANAGER')
-
         self.frame1.pack(side=LEFT,  padx=10, pady=10, fill=Y)
-        #print self.frame1.configure(background='gray')
-        #print "in frame1 background--->"+str(self.frame1.cget('background'))+"<-- framecolor -->",str(self.frame1.cget('framecolor'))
 
-        self.LoginLabel = Label(self.topFrame, padding=20, text='Press \'NEW LOGIN\' to start a session or \'OPEN\' to open a .vnc file')
+        self.LoginLabel = Label(self.topFrame, padding=20, text='Press \'LOGIN\' to start a session or \'OPEN\' to open a .vnc file')
         self.LoginLabel.pack(padx=10, pady=10, fill=Y)
 
         self.n = ConnectionWindowNotebook(self.topFrame)
@@ -759,11 +813,14 @@ class rcm_client_connection_GUI():
         s.configure('RCM.TButton', font=('Helvetica', 10, 'bold'))
         s.map('RCM.TButton',foreground=[('disabled','#909090')])
        
-        LoginButton = Button(self.frame1, text="NEW LOGIN", padding=5, style='RCM.TButton', command=self.newLogin)
+        LoginButton = Button(self.frame1, text="LOGIN", padding=5, style='RCM.TButton', command=self.newLogin)
         LoginButton.pack()
 
         OpenButton = Button(self.frame1, text="   OPEN   ", padding=5, style='RCM.TButton', command=self.askopenfilename)
-        OpenButton.pack(pady=10)
+        OpenButton.pack(pady=5)
+
+        self.RemoveButton = Button(self.frame1, text="   LOGOUT  ", padding=5, style='RCM.TButton', command=self.removeLogin)
+        
 
         self.frameBottom = Frame(self.topFrame, padding=1)
         self.frameBottom.pack(side=BOTTOM, fill=X)
@@ -779,9 +836,14 @@ class rcm_client_connection_GUI():
 
     def newLogin(self):
 
-        myLoginDialog = LoginDialog(self.master, guiaction = self.createConnectionWindow, pack_info = self.pack_info)
+        myLoginDialog = LoginDialog(self.topFrame, guiaction = self.createConnectionWindow, pack_info = self.pack_info)
         myLoginDialog.top.grab_set()
 
+
+    def removeLogin(self):
+        self.n.myremove()
+        if len(self.n.tabs()) <= 1 :
+            self.RemoveButton.pack_forget()
 
     def askopenfilename(self,filename=None):
         if(not filename):
@@ -803,14 +865,18 @@ class rcm_client_connection_GUI():
                     if 'rcm_tunnel' in l:
                         node = l.split('=')[1].rstrip()
                         #check credential for the cluster, not for the specific node
-                        credential = self.n.getConnectionInfo(node.split('.',1)[1])
-                        if credential != None:
-                            user = credential['user']
-                            my_rcm_client.login_setup(host=node,remoteuser=user,password=credential['password'])
+                        if(self.n):
+                            credential = self.n.getConnectionInfo(node.split('.',1)[1])
+                            if credential != None:
+                                user = credential['user']
+                                my_rcm_client.login_setup(host=node,remoteuser=user,password=credential['password'])
+                            else:
+                                tkMessageBox.showwarning("Warning!", "Please login to \"{0}\" to open this shared display.".format(node))
+                                return
                         else:
-                            tkMessageBox.showwarning("Warning!", "Please login to \"{0}\" to open this shared display.".format(node))
+                            module_logger.error("connections with tunnel need to be in GUI mode with a proper connection to login node")
                             return
-
+                        
                     if 'host' in l:
                         hostname = l.split('=')[1].rstrip()
                     if 'port' in l:
@@ -823,6 +889,7 @@ class rcm_client_connection_GUI():
                 my_rcm_client.vncsession(session = c)
             else:
                 my_rcm_client.vncsession(configFile = filename)
+            self.topFrame.connections.append(my_rcm_client)
             self.last_used_dir=os.path.dirname(filename)
 
 
@@ -833,7 +900,8 @@ class rcm_client_connection_GUI():
         self.n.pack(expand=1, fill=BOTH)
         self.rcm_client = rcm_client
         self.n.myadd(self.rcm_client)
-
+        if len(self.n.tabs()) > 1 :
+            self.RemoveButton.pack(pady=5)
 
 
 class ConnectionWindowNotebook(Notebook):
@@ -842,6 +910,7 @@ class ConnectionWindowNotebook(Notebook):
         self.master = master
         Notebook.__init__(self, master)
         self.ConnectionWindows = dict()
+        self.WindowsNames = dict()
 
 
     def myadd(self, rcm_client = None):
@@ -853,10 +922,23 @@ class ConnectionWindowNotebook(Notebook):
             else:
                 child = ConnectionWindow(rcm_client_connection=rcm_client, master=self.master)
                 Notebook.add(self, child, text = notebookName)
-                index = self.index('end') - 1
-                self.ConnectionWindows[notebookName] = (index, child)
-                self.select(index)
+                self.select(self.index('end') - 1)
+                self.ConnectionWindows[notebookName] = (self.select(), child)
+                #self.select(index)
+                self.WindowsNames[self.select()]=(child,notebookName)
+    
+    def myremove(self):
+        win_name=self.select()
+        
+        (child,name)=self.WindowsNames[win_name]
+        module_logger.debug( "sono qui"+ str(child))
+        self.forget('current')
+        child.destroy()
+        del self.WindowsNames[win_name]
+        del self.ConnectionWindows[name]
+        
 
+        
     def getConnectionInfo(self, tunnel_node = ''):
         for i in self.ConnectionWindows:
             if tunnel_node in i:
@@ -867,9 +949,19 @@ class ConnectionWindowNotebook(Notebook):
 
 
 if __name__ == '__main__':
+    
+    parser = argparse.ArgumentParser(description='RCM client.')
+    parser.add_argument('-d','--debug',default=0,type=int,
+                   help='define %(prog)s verbosity')
+    parser.add_argument('-l','--vncloglev',default=0,type=int,
+                   help='pass  this to vnc loglevel')
+    parser.add_argument('infile',nargs='?')
+    p=parser.parse_args()
+    
+    rcm_utils.configure_logging(verbose=p.debug,vnclv=p.vncloglev)
     c=rcm_client_connection_GUI()
-    if(1 < len(sys.argv)):
-        c.askopenfilename(sys.argv[1])
+    if(p.infile):
+        c.askopenfilename(p.infile)
     else:
         c.show()
         c.mainloop()

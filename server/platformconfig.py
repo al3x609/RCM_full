@@ -14,7 +14,12 @@ class baseconfig:
     def parse(self,configfile=''):
         config = ConfigParser.RawConfigParser()
 	if(not configfile):
-	    myPath =  os.path.dirname(os.path.abspath(__file__))
+	    myPath =   os.path.join(
+                        os.path.dirname(
+                         os.path.dirname(
+                          os.path.abspath(__file__)
+                         )
+                        ),'config')
             configfile=os.path.join(myPath, self.filename)
 
         if(not os.path.exists(configfile)):
@@ -32,7 +37,7 @@ class baseconfig:
 class versionconfig(baseconfig):
     def __init__(self):
 	baseconfig.__init__(self)
-        self.filename='versionRCM.cfg'
+        self.filename=os.path.join(os.path.dirname(os.path.abspath(__file__)),'versionRCM.cfg')
 	self.parse()
     
     def get_checksum(self,buildPlatformString=''):
@@ -76,8 +81,14 @@ class platformconfig(baseconfig):
     def vnc_attribute(self,vnc_id,section):
 	names=vnc_id.split('_')
 	prev=names[0]
+	nodelogin = socket.gethostname()
+        
 	for name in [vnc_id]+names:
-	  found=self.confdict.get((section,name),None)
+	  # Check if is present a specific setup for this node, otherwise get the default
+          name_with_node = name + '@' + nodelogin
+          found=self.confdict.get((section,name_with_node),None)
+          if not found: 
+            found=self.confdict.get((section,name),None)
 	  if(found): 
             ret=string.Template(found).safe_substitute(__VNC_ID__=vnc_id,__VNC_PREV_MATCH__=prev,__VNC_TOP_MATCH__=names[0])
 #	    print "found-->",found,"<-- ret-->",ret,"<--"
@@ -88,7 +99,8 @@ class platformconfig(baseconfig):
     def vnc_subst(self,vnc_id):
 	subst=dict()
 	for s in self.sections:
-	  if s.startswith('vnc_'): subst[s]=self.vnc_attribute(vnc_id,s)
+	  if s.startswith('vnc_'): 
+            subst[s]=self.vnc_attribute(vnc_id,s)
         return subst
 		  
     def vnc_attrib_subst(self,vnc_id,section,subst=dict()):

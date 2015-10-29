@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import sys
 import string
@@ -9,6 +10,7 @@ import pwd
 import traceback
 import datetime
 import time
+import shutil
 
 import rcm
 import platformconfig
@@ -32,10 +34,14 @@ class rcm_base_server:
 
     def get_timelimit(self):
 	return self.pconfig.confdict.get(('walltimelimit',self.queue),self.notimeleft_string)
+
+    def get_use_tunnel(self):
+	return self.pconfig.confdict.get(('platform','usetunnel'),'n')
     
-    def set_vnc_setup(self,id):
+    def set_vnc_setup(self, id):
 	if self.vnc_command_in_background(): self.substitutions['vnc_foreground']=''
-        self.vnc_setup = self.pconfig.vnc_attrib_subst(id,'vnc_setup',subst=self.substitutions)
+
+	self.vnc_setup = self.pconfig.vnc_attrib_subst(id,'vnc_setup',subst=self.substitutions)
 	self.substitutions['RCM_MODULE_SETUP']= self.vnc_setup
 	self.substitutions['RCM_VNCSERVER'] = self.pconfig.vnc_attrib_subst(id,'vnc_command',subst=self.substitutions)
 
@@ -48,15 +54,19 @@ class rcm_base_server:
 
     def getUserAccounts(self):
         #cineca deployment dependencies
-        p1 = subprocess.Popen(["saldo","-nb"], stdout=subprocess.PIPE)
-        stdout,stderr = p1.communicate()
-        if 'not existing' in stdout:
-            #old type user
+        try:
+            p1 = subprocess.Popen(["saldo","-nb"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            stdout,stderr = p1.communicate()
+            if 'not existing' in stdout:
+                #old type user
+                return []
+            else:
+                #now return a fixed group for experimentation
+                #cineca deployment dependencies
+                return ['cin_visual']
+        except Exception,inst:
+            #sys.stderr.write("session->%s RCM:EXCEPTION %s: %s " % (sid,inst, traceback.format_exc()))
             return []
-        else:
-            #now return a fixed group for experimentation
-            #cineca deployment dependencies
-            return ['cin_visual']
 
     def groupSubstitution(self, groupName, template):
         #print "groupName : ", groupName , "template: ", template
@@ -219,13 +229,23 @@ class rcm_base_server:
         if (not os.path.exists(desktop_dest_dir)):
             os.makedirs(desktop_dest_dir)
     
-        desktop_source_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),'Desktop_setup')
+        desktop_source_dir =   os.path.join(
+                                os.path.dirname(
+                                 os.path.dirname(
+                                  os.path.abspath(__file__)
+                                 )
+                                ),'config','Desktop_setup')
+
         for f in glob.glob(desktop_source_dir + '/*.desktop' ):
             fDest = os.path.join(desktop_dest_dir, os.path.basename(f))
-            if (os.path.exists(fDest)):
-                if (open(f, 'r').read() == open(fDest, 'r').read()):
-                    return 
-            shutil.copy(f,desktop_dest_dir)
+            if (not os.path.exists(fDest)):
+                 try:
+                     os.remove(fDest)
+                 except:
+                     pass
+                 #os.link(f,fDest)
+                 shutil.copy2(f,fDest)
+             
       
     def clean_files(self,sid):
         for d in self.get_rcmdirs():
@@ -318,7 +338,8 @@ done"""
             (n,d,otp)=self.wait_jobout(sid,400)
             #here we test if hostname returned by jobout is the same host (ssh case)
             if(n == socket.gethostname()): 
-                tunnel='n'
+		#print "setto il tunnel a ", self.get_use_tunnel()
+                tunnel=self.get_use_tunnel()
             else:
                 tunnel='y'
             #n+='ib0'
@@ -345,3 +366,4 @@ if __name__ == '__main__':
 	print "rcmdirs:",s.get_rcmdirs()
 	print "fill_sessions_hash:",s.fill_sessions_hash()
 	print "load sessions:",s.load_sessions()
+	print "vnc_setup for turbovnc:",s.set_vnc_setup('kde_turbovnc_vnc')
